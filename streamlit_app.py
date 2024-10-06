@@ -19,7 +19,6 @@ COIN_COLORS = {
     'KRW-ETH': '#e74c3c',  # 빨간색
     'KRW-SOL': '#2ecc71',  # 초록색
     'KRW-SUI': '#9b59b6',  # 보라색
-    'USDT-BTC': '#3498db'  # 파란색
 }
 
 def load_data():
