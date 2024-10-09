@@ -1,0 +1,164 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+import joblib
+from datetime import datetime, timedelta
+
+# 예측 결과를 저장할 DataFrame
+predictions_df = pd.DataFrame(columns=['timestamp', 'coin', 'current_price', 'predicted_30min', 'predicted_1hour', 'predicted_24hours'])
+
+def save_prediction(coin, current_price, predicted_30min, predicted_1hour, predicted_24hours):
+    global predictions_df
+    new_prediction = pd.DataFrame({
+        'timestamp': [datetime.now()],
+        'coin': [coin],
+        'current_price': [current_price],
+        'predicted_30min': [predicted_30min],
+        'predicted_1hour': [predicted_1hour],
+        'predicted_24hours': [predicted_24hours]
+    })
+    predictions_df = pd.concat([predictions_df, new_prediction], ignore_index=True)
+    
+    # 7일 이상 된 데이터 삭제
+    predictions_df = predictions_df[predictions_df['timestamp'] > datetime.now() - timedelta(days=7)]
+
+def calculate_error(coin):
+    global predictions_df
+    coin_predictions = predictions_df[predictions_df['coin'] == coin]
+    
+    if len(coin_predictions) < 2:
+        return None
+
+    latest_prediction = coin_predictions.iloc[-1]
+    previous_prediction = coin_predictions.iloc[-2]
+
+    time_diff = latest_prediction['timestamp'] - previous_prediction['timestamp']
+
+    if time_diff < timedelta(minutes=30):
+        actual = latest_prediction['current_price']
+        predicted = previous_prediction['predicted_30min']
+    elif time_diff < timedelta(hours=1):
+        actual = latest_prediction['current_price']
+        predicted = previous_prediction['predicted_1hour']
+    elif time_diff < timedelta(hours=24):
+        actual = latest_prediction['current_price']
+        predicted = previous_prediction['predicted_24hours']
+    else:
+        return None
+
+    error = actual - predicted
+    error_percentage = (error / predicted) * 100
+
+    return {
+        'error': error,
+        'error_percentage': error_percentage
+    }
+
+def train_model(coin, data):
+    """
+    주어진 데이터로 랜덤 포레스트 모델을 학습시킵니다.
+    """
+    # 특성과 타겟 분리
+    features = ['bb_position', 'MA20', 'MA50', 'MACD', 'RSI']
+    X = data[features]
+    y = data['close'].shift(-1)  # 다음 날의 종가를 예측
+
+    # NaN 제거
+    X = X.dropna()
+    y = y.loc[X.index]  # X와 y의 인덱스를 일치시킵니다
+
+    # y에서 NaN 제거
+    mask = ~np.isnan(y)
+    X = X.loc[mask]
+    y = y.loc[mask]
+
+    # 데이터가 충분한지 확인
+    if len(X) < 10:  # 예: 최소 10개의 샘플이 필요하다고 가정
+        print("학습에 필요한 충분한 데이터가 없습니다.")
+        return None
+
+    # 학습 데이터와 테스트 데이터 분리
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # 랜덤 포레스트 모델 학습
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    # 모델 성능 평가
+    y_pred = model.predict(X_test)
+    mse = mean_squared_error(y_test, y_pred)
+    print(f"모델 MSE: {mse}")
+
+    # 모델 저장
+    joblib.dump(model, f'price_prediction_model_{coin}.joblib')
+
+    return model
+
+def predict_prices(coin, coin_data, analysis_results, current_price, news_data, economic_data):
+    """
+    학습된 모델을 사용하여 향후 가격을 예측합니다.
+    """
+    # 모델 로드 (없으면 새로 학습)
+    try:
+        model = joblib.load(f'price_prediction_model_{coin}.joblib')
+    except FileNotFoundError:
+        print(f"저장된 모델이 없습니다. 새로운 모델을 학습합니다. ({coin})")
+        model = train_model(coin, coin_data)
+        if model is None:
+            print(f"모델 학습에 실패했습니다. ({coin})")
+            return None
+
+    # 예측을 위한 데이터 준비
+    latest_data = pd.DataFrame({
+        'bb_position': [coin_data['bb_position'].iloc[-1]],
+        'MA20': [coin_data['MA20'].iloc[-1]],
+        'MA50': [coin_data['MA50'].iloc[-1]],
+        'MACD': [coin_data['MACD'].iloc[-1]],
+        'RSI': [coin_data['RSI'].iloc[-1]]
+    })
+
+    # NaN 값 확인 및 처리
+    if latest_data.isnull().values.any():
+        print("예측 데이터에 NaN 값이 포함되어 있습니다. 이를 0으로 대체합니다.")
+        latest_data = latest_data.fillna(0)
+
+    # 가격 예측 (과도한 변동 방지)
+    predicted_price = model.predict(latest_data)[0]
+    max_change = 0.05  # 최대 5% 변동 허용
+
+    predicted_price_30min = max(min(predicted_price, current_price * (1 + max_change)), current_price * (1 - max_change))
+    predicted_price_1hour = max(min(predicted_price * 1.001, current_price * (1 + max_change)), current_price * (1 - max_change))
+    predicted_price_24hours = max(min(predicted_price * 1.005, current_price * (1 + max_change)), current_price * (1 - max_change))
+
+    # 예측 결과 저장
+    save_prediction(coin, current_price, predicted_price_30min, predicted_price_1hour, predicted_price_24hours)
+
+    # 오차 계산
+    error_info = calculate_error(coin)
+    if error_info:
+        prediction_results = {
+            'current_price': current_price,
+            'predicted_price_30min': round(predicted_price_30min, 2),
+            'predicted_price_1hour': round(predicted_price_1hour, 2),
+            'predicted_price_24hours': round(predicted_price_24hours, 2),
+            'last_error': error_info['error'],
+            'last_error_percentage': error_info['error_percentage']
+        }
+    else:
+        prediction_results = {
+            'current_price': current_price,
+            'predicted_price_30min': round(predicted_price_30min, 2),
+            'predicted_price_1hour': round(predicted_price_1hour, 2),
+            'predicted_price_24hours': round(predicted_price_24hours, 2)
+        }
+
+    # 예측 이유
+    if predicted_price > current_price:
+        prediction_results['reason'] = "기술적 지표가 상승세를 나타내고 있습니다."
+    else:
+        prediction_results['reason'] = "기술적 지표가 하락세를 나타내고 있습니다."
+
+    print("가격 예측 완료")
+    return prediction_results

@@ -1,0 +1,14 @@
+pandas
+numpy
+requests
+python-dotenv
+schedule
+scikit-learn
+joblib
+ta
+matplotlib
+mplfinance
+opencv-python
+streamlit
+plotly
+fredapi
