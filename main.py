@@ -5,9 +5,15 @@ from datetime import datetime
 from data_collector import collect_upbit_data, get_current_price, collect_data
 from technical_analysis import perform_analysis
 from price_predictor import predict_prices
+import logging
 
-logging.basicConfig(filename='coin_prediction.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# 파일과 콘솔 모두에 로그를 출력하도록 설정
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler("coin_prediction.log"),
+                        logging.StreamHandler()
+                    ])
 
 COINS = ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']
 
@@ -40,16 +46,25 @@ def job():
             analysis_results = perform_analysis(coin_data)
 
             # 뉴스 데이터 가져오기
-            news_data = collected_data.get('news_data', {}).get(coin, [])
+            news_data = collected_data.get('us_economic_news', [])
 
             # 가격 예측
-            economic_data = collected_data.get('economic_data', [])
+            economic_data = collected_data.get('economic_data', {})
             predictions = predict_prices(coin, coin_data, analysis_results, current_price, news_data, economic_data)
 
             # 결과 출력
             if predictions:
-                logging.info(f"{coin} 예측:")
-                logging.info(predictions)
+                logging.info(f"{coin} 예측 결과:")
+                logging.info(f"현재 가격: {current_price}")
+                logging.info(f"30분 후 예상 가격: {predictions.get('predicted_price_30min', 'N/A')}")
+                logging.info(f"1시간 후 예상 가격: {predictions.get('predicted_price_1hour', 'N/A')}")
+                logging.info(f"24시간 후 예상 가격: {predictions.get('predicted_price_24hours', 'N/A')}")
+                logging.info(f"예측 이유: {predictions.get('reason', '이유 없음')}")
+                
+                # 오차 정보 로깅
+                if 'last_error' in predictions:
+                    logging.info(f"마지막 예측 오차: {predictions['last_error']}")
+                    logging.info(f"마지막 예측 오차 비율: {predictions['last_error_percentage']}%")
             else:
                 logging.warning(f"{coin} 예측 실패")
             
