@@ -19,7 +19,12 @@ def save_prediction(coin, current_price, predicted_30min, predicted_1hour, predi
         'predicted_1hour': [predicted_1hour],
         'predicted_24hours': [predicted_24hours]
     })
-    predictions_df = pd.concat([predictions_df, new_prediction], ignore_index=True)
+    
+    # 빈 DataFrame이면 새로운 DataFrame으로 초기화
+    if predictions_df.empty:
+        predictions_df = new_prediction
+    else:
+        predictions_df = pd.concat([predictions_df, new_prediction], ignore_index=True)
     
     # 7일 이상 된 데이터 삭제
     predictions_df = predictions_df[predictions_df['timestamp'] > datetime.now() - timedelta(days=7)]
@@ -109,6 +114,19 @@ def predict_prices(coin, coin_data, analysis_results, current_price, news_data, 
         if model is None:
             print(f"모델 학습에 실패했습니다. ({coin})")
             return None
+        
+    # 새로운 특성 추가
+    latest_data = pd.DataFrame({
+        'bb_position': [coin_data['bb_position'].iloc[-1]],
+        'MA20': [coin_data['MA20'].iloc[-1]],
+        'MA50': [coin_data['MA50'].iloc[-1]],
+        'MACD': [coin_data['MACD'].iloc[-1]],
+        'RSI': [coin_data['RSI'].iloc[-1]],
+        'stoch_k': [coin_data['%K'].iloc[-1] if '%K' in coin_data.columns else 0],
+        'stoch_d': [coin_data['%D'].iloc[-1] if '%D' in coin_data.columns else 0],
+        'vsta_trend_strength': [analysis_results['volume_super_trend_ai']['trend_strength']],
+        'rapid_fall_rebound': [1 if analysis_results['rapid_fall_rebound']['signal'] == 'Buy' else 0]
+    })
 
     # 예측을 위한 데이터 준비
     latest_data = pd.DataFrame({
@@ -159,6 +177,10 @@ def predict_prices(coin, coin_data, analysis_results, current_price, news_data, 
         prediction_results['reason'] = "기술적 지표가 상승세를 나타내고 있습니다."
     else:
         prediction_results['reason'] = "기술적 지표가 하락세를 나타내고 있습니다."
+
+     # 예측 이유 업데이트
+    prediction_results['reason'] += f" Volume Super Trend AI는 {analysis_results['volume_super_trend_ai']['signal']} 신호를 보이고 있으며, 강도는 {analysis_results['volume_super_trend_ai']['strength']}입니다."
+    prediction_results['reason'] += f" 급락 후 반등 분석은 {analysis_results['rapid_fall_rebound']['signal']} 신호를 보이고 있습니다."
 
     print("가격 예측 완료")
     return prediction_results

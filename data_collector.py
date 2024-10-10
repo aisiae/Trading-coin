@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import math
 from datetime import datetime, timedelta
+from fredapi import Fred
 
 # .env 파일에서 환경 변수 로드
 load_dotenv()
@@ -14,7 +15,8 @@ load_dotenv()
 # API 키 가져오기
 UPBIT_ACCESS_KEY = os.getenv('UPBIT_ACCESS_KEY')
 UPBIT_SECRET_KEY = os.getenv('UPBIT_SECRET_KEY')
-TRADING_ECONOMICS_API_KEY = os.getenv('TRADING_ECONOMICS_API_KEY')
+FRED_API_KEY = os.getenv('FRED_API_KEY')
+NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
 # 차트 이미지를 저장할 디렉토리 설정
 CHART_DIR = 'chart_images'
@@ -43,12 +45,6 @@ def add_technical_indicators(df):
     df['upper_band_20'] = df['MA20'] + (df['std_20'] * 2)
     df['lower_band_20'] = df['MA20'] - (df['std_20'] * 2)
     df['bb_position'] = (df['close'] - df['lower_band_20']) / (df['upper_band_20'] - df['lower_band_20'])
-
-    # 볼린저 밴드 (4시간, 4 표준편차)
-    df['MA4'] = df['open'].rolling(window=4).mean()
-    df['std_4'] = df['open'].rolling(window=4).std()
-    df['upper_band_4'] = df['MA4'] + (df['std_4'] * 4)
-    df['lower_band_4'] = df['MA4'] - (df['std_4'] * 4)
 
     # RSI (14시간)
     delta = df['close'].diff()
@@ -211,62 +207,83 @@ def get_upbit_coin_info(coins=['KRW-BTC', 'KRW-ETH', 'KRW-XRP', 'KRW-SOL', 'KRW-
         print(f"업비트 코인 정보 수집 중 오류 발생: {e}")
         return pd.DataFrame()
 
-def get_news_data(coin):
-    """
-    TradingEconomics API를 사용하여 특정 코인에 대한 뉴스 데이터를 가져옵니다.
-    """
-    url = f'https://api.tradingeconomics.com/news?c={TRADING_ECONOMICS_API_KEY}'
-    response = requests.get(url)
-
-    if response.status_code == 200:
+def get_us_economic_news():
+    url = "https://newsapi.org/v2/top-headlines"
+    params = {
+        "country": "us",
+        "category": "business",
+        "apiKey": NEWS_API_KEY
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
         data = response.json()
+        
         news_data = []
-        # 코인과 관련된 뉴스만 필터링
-        for item in data:
-            if coin.lower() in item['title'].lower() or coin.lower() in item['description'].lower():
-                news_data.append({
-                    'title': item['title'],
-                    'content': item['description'],
-                    'date': item['date']
-                })
+        for article in data.get("articles", []):
+            news_data.append({
+                'title': article['title'],
+                'description': article['description'],
+                'published_at': article['publishedAt']
+            })
+        
         return news_data
-    else:
-        print(f"뉴스 데이터를 가져오는 데 실패했습니다. 상태 코드: {response.status_code}")
+    except Exception as e:
+        print(f"미국 경제 뉴스 데이터를 가져오는 데 실패했습니다: {e}")
         return []
 
-def get_economic_data():
-    """
-    TradingEconomics API를 사용하여 경제 지표 데이터를 가져옵니다.
-    """
-    url = f'https://api.tradingeconomics.com/indicators?c={TRADING_ECONOMICS_API_KEY}'
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"경제 데이터를 가져오는 데 실패했습니다. 상태 코드: {response.status_code}")
-        return []
+def get_fred_economic_data():
+    fred = Fred(api_key=FRED_API_KEY)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)  # 1년치 데이터로 확장
+    
+    indicators = {
+        'GDP': 'GDP',
+        'Inflation': 'CPIAUCSL',
+        'Unemployment': 'UNRATE',
+        'Interest Rate': 'FEDFUNDS',
+        'USD/KRW Exchange Rate': 'DEXKOUS'
+    }
+    
+    economic_data = {}
+    
+    for name, series_id in indicators.items():
+        try:
+            data = fred.get_series(series_id, start_date, end_date)
+            if not data.empty:
+                latest_date = data.index[-1]
+                economic_data[name] = {
+                    'value': data.iloc[-1],
+                    'date': latest_date.strftime('%Y-%m-%d')
+                }
+            else:
+                print(f"{name} 데이터가 비어 있습니다.")
+        except Exception as e:
+            print(f"{name} 데이터를 가져오는 데 실패했습니다: {e}")
+    
+    return economic_data
 
 def collect_data():
-    print("코인 정보 및 뉴스 데이터 수집 중...")
+    print("데이터 수집 중...")
     coin_info = get_upbit_coin_info()
-    
-    news_data = {}
-    for coin in ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']:
-        news_data[coin] = get_news_data(coin)
-    
-    economic_data = get_economic_data()
+    us_economic_news = get_us_economic_news()
+    economic_data = get_fred_economic_data()
     
     if not coin_info.empty:
         print("데이터 수집 완료")
         return {
             "coin_info": coin_info.to_dict('records'),
-            "news_data": news_data,
+            "us_economic_news": us_economic_news,
             "economic_data": economic_data
         }
     else:
         print("코인 정보를 가져오지 못했습니다.")
-        return {"coin_info": None, "news_data": news_data, "economic_data": economic_data}
+        return {
+            "coin_info": None, 
+            "us_economic_news": us_economic_news, 
+            "economic_data": economic_data
+        }
 
 # 테스트를 위한 코드
 if __name__ == "__main__":
@@ -277,11 +294,13 @@ if __name__ == "__main__":
     else:
         print("코인 정보 수집 실패")
 
-    print("\n수집된 뉴스 데이터:")
-    for coin, news in collected_data['news_data'].items():
-        print(f"\n{coin} 관련 뉴스:")
-        for item in news:
-            print(f"- {item['title']} ({item['date']})")
+    print("\n수집된 미국 경제 뉴스 (최근 5개):")
+    for news in collected_data['us_economic_news'][:5]:
+        print(f"- {news['title']} ({news['published_at']})")
 
     print("\n수집된 경제 데이터:")
-    print(collected_data['economic_data'][:3])  # 처음 세 개의 경제 데이터 항목을 출력
+    for indicator, data in collected_data['economic_data'].items():
+        if data:
+            print(f"- {indicator}: {data['value']} (Date: {data['date']})")
+        else:
+            print(f"- {indicator}: 데이터 없음")

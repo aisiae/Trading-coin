@@ -45,14 +45,6 @@ def create_technical_chart(df):
     fig.add_trace(go.Scatter(x=df.index, y=df['lower_band_20'], name='하단 밴드 (20, 2)',
                              line=dict(color='rgba(255, 0, 0, 0.3)')), row=1, col=1)
 
-    # 볼린저 밴드 (4시간, 4 표준편차)
-    fig.add_trace(go.Scatter(x=df.index, y=df['upper_band_4'], name='상단 밴드 (4, 4)',
-                             line=dict(color='rgba(0, 0, 255, 0.3)')), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA4'], name='4시간 이동평균',
-                             line=dict(color='rgba(0, 0, 255, 0.8)')), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['lower_band_4'], name='하단 밴드 (4, 4)',
-                             line=dict(color='rgba(0, 0, 255, 0.3)')), row=1, col=1)
-
     # 이동평균선
     fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], name='50시간 이동평균',
                              line=dict(color='rgba(0, 255, 0, 0.8)')), row=1, col=1)
@@ -129,7 +121,7 @@ def main():
 
         # 기술적 분석 및 가격 예측
         analysis_results = perform_analysis(coin_data)
-        predictions = predict_prices(selected_coin, coin_data, analysis_results, current_price, collected_data['news_data'].get(selected_coin, []), collected_data.get('economic_data', []))
+        predictions = predict_prices(selected_coin, coin_data, analysis_results, current_price, collected_data.get('us_economic_news', []), collected_data.get('economic_data', {}))
 
         # 가격 예측 결과 표시 (상단으로 이동)
         st.subheader('가격 예측')
@@ -175,6 +167,27 @@ def main():
         fib_strength = "강함" if analysis_results['fibonacci']['strength'] == 'Strong' else "약함" if analysis_results['fibonacci']['strength'] == 'Weak' else "중립"
         st.write(f"- 피보나치 분석: {fib_signal} ({fib_strength})")
 
+        # Volume Super Trend AI 분석
+        st.write("Volume Super Trend AI 분석:")
+        vsta = analysis_results['volume_super_trend_ai']
+        st.write(f"- 신호: {'매수' if vsta['signal'] == 'Buy' else '매도'}")
+        st.write(f"- 강도: {vsta['strength']}")
+        st.write(f"- Super Trend 값: {vsta['super_trend_value']:.2f}")
+        st.write(f"- 추세 강도: {vsta['trend_strength']:.2f}")
+
+        # 급락 후 반등 분석
+        st.write("급락 후 반등 분석:")
+        rfr = analysis_results['rapid_fall_rebound']
+        st.write(f"- 신호: {rfr['signal']}")
+        st.write(f"- 강도: {rfr['strength']}")
+        st.write(f"- 이유: {rfr['reason']}")
+
+        # 전체 신호 표시 부분 수정
+        overall_signal = analysis_results['overall_signal']
+        st.subheader("종합 분석 결과")
+        st.write(f"전체 신호: {'매수' if overall_signal['signal'] == 'Buy' else '매도' if overall_signal['signal'] == 'Sell' else '중립'}")
+        st.write(f"신호 강도: {overall_signal['strength']}")
+
         # 예측 정확도 표시 (30분, 1시간, 24시간 전 예측 정확도 계산)
         if 'error_30min' in predictions and 'error_1hour' in predictions and 'error_24hours' in predictions:
             st.subheader('이전 예측 정확도')
@@ -202,6 +215,18 @@ def main():
     st.subheader('가격 차트 및 기술적 지표')
     chart = create_technical_chart(coin_data)
     st.plotly_chart(chart, use_container_width=True)
+
+    # 경제 지표 데이터 표시
+    if 'economic_data' in collected_data and collected_data['economic_data']:
+        st.subheader('주요 경제 지표')
+        for indicator, data in collected_data['economic_data'].items():
+            st.write(f"{indicator}: {data['value']} (날짜: {data['date']})")
+
+    # 뉴스 데이터 표시
+    if 'us_economic_news' in collected_data and collected_data['us_economic_news']:
+        st.subheader('최근 경제 뉴스')
+        for news in collected_data['us_economic_news'][:5]:  # 최근 5개 뉴스만 표시
+            st.write(f"- {news['title']} ({news['published_at']})")
 
 if __name__ == '__main__':
     main()

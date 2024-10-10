@@ -12,3 +12,4 @@ opencv-python
 streamlit
 plotly
 fredapi
+newsapi-python
