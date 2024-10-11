@@ -6,6 +6,10 @@ from data_collector import collect_data, collect_upbit_data
 from technical_analysis import perform_analysis
 from price_predictor import predict_prices
 from datetime import datetime, timedelta
+import streamlit as st
+import json
+import os
+from datetime import datetime
 
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="코인 가격 예측 대시보드")
@@ -26,6 +30,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def load_latest_predictions():
+    prediction_files = [f for f in os.listdir() if f.startswith("predictions_") and f.endswith(".json")]
+    if not prediction_files:
+        return None
+    latest_file = max(prediction_files)
+    with open(latest_file, 'r') as f:
+        return json.load(f)
+    
 def create_technical_chart(df):
     # 3일치 데이터만 사용
     df = df.tail(72)  # 1시간 봉 * 24시간 * 3일 = 72
@@ -98,11 +110,63 @@ def analyze_fibonacci_levels(data):
 def main():
     st.title('코인 가격 예측 대시보드')
 
-    # 사이드바에서 코인 선택 (radio 버튼 사용)
-    coin_options = ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']
+    predictions = load_latest_predictions()
+    if not predictions:
+        st.warning("예측 데이터가 없습니다.")
+        return
+
+    coin_options = list(predictions.keys())
     selected_coin = st.sidebar.radio('코인 선택', coin_options)
 
     st.write(f'선택된 코인: {selected_coin}')
+
+    coin_prediction = predictions[selected_coin]
+    
+    # 현재 예측 결과 표시
+    st.subheader('현재 가격 예측')
+    current_price = int(coin_prediction['current_price'])
+    st.write(f"현재 가격: {current_price:,}원")
+    st.write(f"예측 시간: {coin_prediction['prediction_time']}")
+    
+    col1, col2, col3 = st.columns(3)
+    predicted_30min = int(coin_prediction['predicted_price_30min'])
+    predicted_1hour = int(coin_prediction['predicted_price_1hour'])
+    predicted_24hours = int(coin_prediction['predicted_price_24hours'])
+    
+    col1.metric("30분 후 예상 가격", f"{predicted_30min:,}원", f"{predicted_30min - current_price:,}원")
+    col2.metric("1시간 후 예상 가격", f"{predicted_1hour:,}원", f"{predicted_1hour - current_price:,}원")
+    col3.metric("24시간 후 예상 가격", f"{predicted_24hours:,}원", f"{predicted_24hours - current_price:,}원")
+
+    st.write(f"예측 이유: {coin_prediction['reason']}")
+
+    # 이전 예측 분석 (30분, 1시간, 24시간 전 예측 결과)
+    st.subheader('이전 예측 결과 분석')
+    if 'previous_predictions' in coin_prediction:
+        prev_preds = coin_prediction['previous_predictions']
+        
+        for timeframe in ['30min', '1hour', '24hours']:
+            if timeframe in prev_preds:
+                st.write(f"\n{timeframe} 전 예측 결과:")
+                prev_pred = prev_preds[timeframe]
+                prev_price = int(prev_pred['current_price'])
+                prev_predicted_price = int(prev_pred['predicted_price'])
+                error = current_price - prev_predicted_price
+                error_percentage = (error / prev_predicted_price) * 100
+                
+                st.write(f"예측 시간: {prev_pred['prediction_time']}")
+                st.write(f"{timeframe} 전 현재 가격: {prev_price:,}원")
+                st.write(f"{timeframe} 전 예측 가격: {prev_predicted_price:,}원")
+                st.write(f"실제 가격과의 오차: {error:,}원 ({error_percentage:.2f}%)")
+    else:
+        st.write("이전 예측 데이터가 없습니다.")
+
+    # 오차 추이 분석
+    st.subheader('오차 추이 분석')
+    if 'error_history' in coin_prediction:
+        error_df = pd.DataFrame(coin_prediction['error_history'])
+        st.line_chart(error_df.set_index('timestamp')['error_percentage'])
+    else:
+        st.write("오차 추이 데이터가 없습니다.")
 
     # 데이터 수집
     collected_data = collect_data()
@@ -122,18 +186,7 @@ def main():
         # 기술적 분석 및 가격 예측
         analysis_results = perform_analysis(coin_data)
         predictions = predict_prices(selected_coin, coin_data, analysis_results, current_price, collected_data.get('us_economic_news', []), collected_data.get('economic_data', {}))
-
-        # 가격 예측 결과 표시 (상단으로 이동)
-        st.subheader('가격 예측')
-        st.write(f"현재 가격: {int(current_price):,}원 (예측 시간: {timestamp})")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("30분 후 예상 가격", f"{int(predictions['predicted_price_30min']):,}원", 
-                    f"{int(predictions['predicted_price_30min'] - current_price):,}원")
-        col2.metric("1시간 후 예상 가격", f"{int(predictions['predicted_price_1hour']):,}원", 
-                    f"{int(predictions['predicted_price_1hour'] - current_price):,}원")
-        col3.metric("24시간 후 예상 가격", f"{int(predictions['predicted_price_24hours']):,}원", 
-                    f"{int(predictions['predicted_price_24hours'] - current_price):,}원")
-        
+     
         # 피보나치 분석 결과 추가
         fibonacci_analysis = analyze_fibonacci_levels(coin_data)
         analysis_results['fibonacci'] = fibonacci_analysis
@@ -188,28 +241,40 @@ def main():
         st.write(f"전체 신호: {'매수' if overall_signal['signal'] == 'Buy' else '매도' if overall_signal['signal'] == 'Sell' else '중립'}")
         st.write(f"신호 강도: {overall_signal['strength']}")
 
-        # 예측 정확도 표시 (30분, 1시간, 24시간 전 예측 정확도 계산)
-        if 'error_30min' in predictions and 'error_1hour' in predictions and 'error_24hours' in predictions:
-            st.subheader('이전 예측 정확도')
-            st.write(f"30분 전 오차: {int(predictions['error_30min']['error']):,}원, 오차율: {predictions['error_30min']['error_percentage']:.2f}%")
-            st.write(f"1시간 전 오차: {int(predictions['error_1hour']['error']):,}원, 오차율: {predictions['error_1hour']['error_percentage']:.2f}%")
-            st.write(f"24시간 전 오차: {int(predictions['error_24hours']['error']):,}원, 오차율: {predictions['error_24hours']['error_percentage']:.2f}%")
-            st.write("오차 감소 여부:")
-            st.write(f"- 30분 전 -> 1시간 전: {'감소' if predictions['error_1hour']['error'] < predictions['error_30min']['error'] else '증가'}")
-            st.write(f"- 1시간 전 -> 24시간 전: {'감소' if predictions['error_24hours']['error'] < predictions['error_1hour']['error'] else '증가'}")
 
-        # 누적 예측 정확도 표시 (최근 3일까지의 데이터)
-        if 'cumulative_errors' in predictions:
-            st.subheader('누적 예측 정확도 (최근 3일)')
-            cumulative_errors = predictions['cumulative_errors'][-3:]  # 최근 3일까지의 데이터만 표시
-            if cumulative_errors:
-                cumulative_df = pd.DataFrame(cumulative_errors)
-                cumulative_df['timestamp'] = cumulative_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
-                st.table(cumulative_df[['timestamp', 'predicted_30min', 'error_30min', 'error_percentage_30min',
-                                        'predicted_1hour', 'error_1hour', 'error_percentage_1hour',
-                                        'predicted_24hours', 'error_24hours', 'error_percentage_24hours']])
-            else:
-                st.write("누적 데이터가 없습니다.")
+# 누적 예측 정확도 표시
+    st.subheader('누적 예측 정확도 (최근 3일)')
+    if 'cumulative_predictions' in coin_prediction:
+        cumulative_preds = coin_prediction['cumulative_predictions']
+        if cumulative_preds:
+            data = []
+            for pred in cumulative_preds[-72:]:  # 최근 3일 데이터 (1시간 간격으로 72개)
+                data.append({
+                    '예측 시간': pred['prediction_time'],
+                    '현재 가격': pred['current_price'],
+                    '30분 후 예측': pred['predicted_price_30min'],
+                    '30분 후 오차': pred['error_30min'],
+                    '30분 후 오차율': f"{pred['error_percentage_30min']:.2f}%",
+                    '1시간 후 예측': pred['predicted_price_1hour'],
+                    '1시간 후 오차': pred['error_1hour'],
+                    '1시간 후 오차율': f"{pred['error_percentage_1hour']:.2f}%",
+                    '24시간 후 예측': pred['predicted_price_24hours'],
+                    '24시간 후 오차': pred['error_24hours'],
+                    '24시간 후 오차율': f"{pred['error_percentage_24hours']:.2f}%"
+                })
+            df = pd.DataFrame(data)
+            st.dataframe(df)
+        
+        # 오차율 추이 그래프
+        st.subheader('오차율 추이')
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df['예측 시간'], y=df['30분 후 오차율'], mode='lines', name='30분 후'))
+        fig.add_trace(go.Scatter(x=df['예측 시간'], y=df['1시간 후 오차율'], mode='lines', name='1시간 후'))
+        fig.add_trace(go.Scatter(x=df['예측 시간'], y=df['24시간 후 오차율'], mode='lines', name='24시간 후'))
+        fig.update_layout(title='예측 시간별 오차율 추이', xaxis_title='예측 시간', yaxis_title='오차율 (%)')
+        st.plotly_chart(fig)
+    else:
+        st.write("누적 예측 데이터가 없습니다.")
 
     # 차트 표시
     st.subheader('가격 차트 및 기술적 지표')
