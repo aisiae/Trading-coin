@@ -1,3 +1,4 @@
+import os
 import schedule
 import time
 import logging
@@ -5,7 +6,6 @@ from datetime import datetime
 from data_collector import collect_upbit_data, get_current_price, collect_data
 from technical_analysis import perform_analysis
 from price_predictor import predict_prices
-import logging
 import json
 
 # 파일과 콘솔 모두에 로그를 출력하도록 설정
@@ -19,10 +19,72 @@ logging.basicConfig(level=logging.INFO,
 COINS = ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']
 
 def save_predictions(predictions):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"predictions_{timestamp}.json"
+    previous_predictions = load_previous_predictions()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 새로운 예측 데이터와 이전 데이터 병합
+    for coin, pred in predictions.items():
+        if coin not in previous_predictions:
+            previous_predictions[coin] = []
+        elif not isinstance(previous_predictions[coin], list):
+            previous_predictions[coin] = [previous_predictions[coin]]
+        
+        # 새 예측에 타임스탬프 추가
+        pred['timestamp'] = timestamp
+        
+        # 최근 10개의 예측만 유지
+        previous_predictions[coin] = previous_predictions[coin][-9:] + [pred]
+    
+    filename = f"predictions_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
     with open(filename, 'w') as f:
-        json.dump(predictions, f)
+        json.dump(previous_predictions, f, indent=4)
+
+    logging.info(f"Predictions saved to {filename}")
+
+
+def load_previous_predictions():
+    files = [f for f in os.listdir() if f.startswith("predictions_") and f.endswith(".json")]
+    if not files:
+        return {}
+    latest_file = max(files)
+    with open(latest_file, 'r') as f:
+        try:
+            data = json.load(f)
+            # 각 코인의 예측 데이터가 리스트가 아니면 리스트로 변환
+            for coin in data:
+                if not isinstance(data[coin], list):
+                    data[coin] = [data[coin]]
+            return data
+        except json.JSONDecodeError:
+            logging.error(f"Error decoding JSON from {latest_file}")
+            return {}
+
+def save_predictions(predictions):
+    previous_predictions = load_previous_predictions()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # predictions 디렉토리 생성 (없는 경우)
+    if not os.path.exists('predictions'):
+        os.makedirs('predictions')
+    
+    # 새로운 예측 데이터와 이전 데이터 병합
+    for coin, pred in predictions.items():
+        if coin not in previous_predictions:
+            previous_predictions[coin] = []
+        elif not isinstance(previous_predictions[coin], list):
+            previous_predictions[coin] = [previous_predictions[coin]]
+        
+        # 새 예측에 타임스탬프 추가
+        pred['timestamp'] = timestamp
+        
+        # 최근 10개의 예측만 유지
+        previous_predictions[coin] = previous_predictions[coin][-9:] + [pred]
+    
+    filename = os.path.join('predictions', f"predictions_{datetime.now().strftime('%Y%m%d_%H%M')}.json")
+    with open(filename, 'w') as f:
+        json.dump(previous_predictions, f, indent=4)
+
+    logging.info(f"Predictions saved to {filename}")
 
 def job():
     try:
@@ -88,6 +150,15 @@ def job():
         logging.info("작업 완료")
     except Exception as e:
         logging.error(f"작업 중 오류 발생: {str(e)}", exc_info=True)
+
+        for coin in COINS:
+            predictions_file = os.path.join('predictions', f'predictions_{coin}.csv')
+        if os.path.exists(predictions_file):
+            predictions_df = pd.read_csv(predictions_file, parse_dates=['timestamp'])
+            print(f"\n최근 {coin} 예측 데이터:")
+            print(predictions_df.tail())
+        else:
+            print(f"{coin}에 대한 예측 데이터가 없습니다.")
 
 def run_schedule():
     while True:

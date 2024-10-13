@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -6,11 +7,16 @@ from sklearn.metrics import mean_squared_error
 import joblib
 from datetime import datetime, timedelta
 
+
+if not os.path.exists('predictions'):
+    os.makedirs('predictions')
+
+
 # 예측 결과를 저장할 DataFrame
 predictions_df = pd.DataFrame(columns=['timestamp', 'coin', 'current_price', 'predicted_30min', 'predicted_1hour', 'predicted_24hours'])
 
 def save_prediction(coin, current_price, predicted_30min, predicted_1hour, predicted_24hours):
-    global predictions_df
+    predictions_file = os.path.join('predictions', f'predictions_{coin}.csv')
     new_prediction = pd.DataFrame({
         'timestamp': [datetime.now()],
         'coin': [coin],
@@ -20,24 +26,29 @@ def save_prediction(coin, current_price, predicted_30min, predicted_1hour, predi
         'predicted_24hours': [predicted_24hours]
     })
     
-    # 빈 DataFrame이면 새로운 DataFrame으로 초기화
-    if predictions_df.empty:
-        predictions_df = new_prediction
-    else:
+    if os.path.exists(predictions_file):
+        predictions_df = pd.read_csv(predictions_file, parse_dates=['timestamp'])
         predictions_df = pd.concat([predictions_df, new_prediction], ignore_index=True)
+    else:
+        predictions_df = new_prediction
     
     # 7일 이상 된 데이터 삭제
     predictions_df = predictions_df[predictions_df['timestamp'] > datetime.now() - timedelta(days=7)]
+    
+    predictions_df.to_csv(predictions_file, index=False)
 
 def calculate_error(coin):
-    global predictions_df
-    coin_predictions = predictions_df[predictions_df['coin'] == coin]
+    predictions_file = os.path.join('predictions', f'predictions_{coin}.csv')
+    if not os.path.exists(predictions_file):
+        return None
     
-    if len(coin_predictions) < 2:
+    predictions_df = pd.read_csv(predictions_file, parse_dates=['timestamp'])
+
+    if len(predictions_df) < 2:
         return None
 
-    latest_prediction = coin_predictions.iloc[-1]
-    previous_prediction = coin_predictions.iloc[-2]
+    latest_prediction = predictions_df.iloc[-1]
+    previous_prediction = predictions_df.iloc[-2]
 
     time_diff = latest_prediction['timestamp'] - previous_prediction['timestamp']
 
@@ -97,7 +108,9 @@ def train_model(coin, data):
     print(f"모델 MSE: {mse}")
 
     # 모델 저장
-    joblib.dump(model, f'price_prediction_model_{coin}.joblib')
+    model_path = os.path.join('predictions', f'price_prediction_model_{coin}.joblib')
+    joblib.dump(model, model_path)
+    print(f"모델이 {model_path}에 저장되었습니다.")
 
     return model
 
@@ -106,8 +119,9 @@ def predict_prices(coin, coin_data, analysis_results, current_price, news_data, 
     학습된 모델을 사용하여 향후 가격을 예측합니다.
     """
     # 모델 로드 (없으면 새로 학습)
+    model_path = os.path.join('predictions', f'price_prediction_model_{coin}.joblib')
     try:
-        model = joblib.load(f'price_prediction_model_{coin}.joblib')
+        model = joblib.load(model_path)
     except FileNotFoundError:
         print(f"저장된 모델이 없습니다. 새로운 모델을 학습합니다. ({coin})")
         model = train_model(coin, coin_data)
@@ -184,3 +198,19 @@ def predict_prices(coin, coin_data, analysis_results, current_price, news_data, 
 
     print("가격 예측 완료")
     return prediction_results
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1:
+        coin = sys.argv[1]
+    else:
+        coin = "BTC"  # 기본값으로 BTC 사용
+
+    predictions_file = os.path.join('predictions', f'predictions_{coin}.csv')
+    if os.path.exists(predictions_file):
+        predictions_df = pd.read_csv(predictions_file, parse_dates=['timestamp'])
+        print(f"\n최근 {coin} 예측 데이터:")
+        print(predictions_df.tail())
+    else:
+        print(f"{coin}에 대한 예측 데이터가 없습니다.")
