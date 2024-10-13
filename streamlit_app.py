@@ -109,17 +109,20 @@ def display_cumulative_predictions_table(cumulative_predictions):
     st.subheader('누적 예측 결과 분석')
     
     data = []
-    for pred in cumulative_predictions:
-        data.append({
-            '예측 시간': pred['prediction_time'],
-            '30분 예측금액': int(pred['predicted_price_30min']),
-            '1시간 예측금액': int(pred['predicted_price_1hour']),
-            '24시간 예측금액': int(pred['predicted_price_24hours']),
-            '현재 가격': int(pred['current_price']),
-            '30분 오차율': round(pred['error_percentage_30min'], 1),
-            '1시간 오차율': round(pred['error_percentage_1hour'], 1),
-            '24시간 오차율': round(pred['error_percentage_24hours'], 1)
-        })
+    for pred_set in cumulative_predictions:
+        for coin, predictions in pred_set.items():
+            for pred in predictions:
+                data.append({
+                '코인': coin,  # 코인 이름 추가
+                '예측 시간': pred['prediction_time'],
+                '30분 예측금액': int(pred['predicted_price_30min']),
+                '1시간 예측금액': int(pred['predicted_price_1hour']),
+                '24시간 예측금액': int(pred['predicted_price_24hours']),
+                '현재 가격': int(pred['current_price']),
+                '30분 오차율': round(pred['error_percentage_30min'], 1),
+                '1시간 오차율': round(pred['error_percentage_1hour'], 1),
+                '24시간 오차율': round(pred['error_percentage_24hours'], 1)
+            })
 
     df = pd.DataFrame(data)
     styled_df = df.style.applymap(style_error_rate, subset=['30분 오차율', '1시간 오차율', '24시간 오차율'])
@@ -127,13 +130,19 @@ def display_cumulative_predictions_table(cumulative_predictions):
     st.dataframe(styled_df)
 
 # 누적 예측 데이터를 불러오는 함수
-def load_cumulative_predictions(coin):
-    filename = f'predictions/cumulative_predictions_{coin}.json'
-    try:
-        with open(filename, 'r') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
+def load_cumulative_predictions():
+    all_predictions = []
+    prediction_files = [f for f in os.listdir('predictions') if f.startswith("predictions_") and f.endswith(".json")]
+    
+    for file in prediction_files:
+        with open(os.path.join('predictions', file), 'r') as f:
+            try:
+                data = json.load(f)
+                all_predictions.append(data)
+            except json.JSONDecodeError:
+                st.error(f"Error decoding JSON from {file}")
+    
+    return all_predictions
 
 # 이전 예측 결과 분석 (30분, 1시간, 24시간 전 예측 결과)
 def display_previous_predictions(cumulative_preds, current_price):
@@ -155,7 +164,6 @@ def display_previous_predictions(cumulative_preds, current_price):
             error = current_price - prev_predicted_price
             error_percentage = (error / prev_predicted_price) * 100
 
-            # 예측 가격 및 오차 금액/오차율 표시 (텍스트만 빨간색으로 표시)
             col.write(f"<div style='font-size: 24px;'>{prev_predicted_price:,}원</div>", unsafe_allow_html=True)
             col.write(f"<div style='color:red;'>{error:,}원 ({error_percentage:.1f}%)</div>", unsafe_allow_html=True)
     else:
@@ -172,11 +180,8 @@ def main():
         st.warning("예측 데이터를 불러오지 못했습니다.")
         return
 
-    # 데이터 로드 및 예시 설정
-    predictions = load_latest_predictions()  # 함수에서 데이터를 로드하는 가정
-
     # 코인 목록 설정 (여러 코인을 추가)
-    coin_options = ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']  # 예시로 추가한 코인들
+    coin_options = ['BTC', 'ETH', 'XRP', 'SOL', 'SUI']  
     selected_coin = st.sidebar.radio('코인 선택', coin_options, key="main_coin_selector")
     
     if selected_coin not in predictions:
@@ -203,8 +208,12 @@ def main():
     st.write(f"예측 이유: {coin_prediction[0]['reason']}")
 
     # 이전 예측 결과 표시
-    cumulative_preds = load_cumulative_predictions(selected_coin)
-    display_previous_predictions(cumulative_preds, current_price)
+    all_cumulative_preds = load_cumulative_predictions()
+    if selected_coin in all_cumulative_preds:
+        cumulative_preds = all_cumulative_preds[selected_coin]
+        display_previous_predictions(cumulative_preds, current_price)
+    else:
+        st.warning(f"{selected_coin}에 대한 누적 예측 데이터가 없습니다.")
 
 
     # 데이터를 수집하여 차트에 사용 (coin_data와 collected_data를 가져옴)
@@ -231,9 +240,20 @@ def main():
         for news in collected_data['us_economic_news'][:5]:  # 최근 5개 뉴스만 표시
             st.write(f"- {news['title']} ({news['published_at']})")
 
+    # 누적 예측 데이터를 불러옴
+    cumulative_predictions = load_cumulative_predictions()
+
+    # 누적 예측 데이터를 표시
+    if cumulative_predictions:
+        display_cumulative_predictions_table(cumulative_predictions)
+    else:
+        st.warning("누적 예측 데이터가 없습니다.")
+
     # 누적 예측 결과 분석을 제일 아래로 이동
-    if cumulative_preds:
-        display_cumulative_predictions_table(cumulative_preds)
+    if selected_coin in all_cumulative_preds:
+        display_cumulative_predictions_table({selected_coin: all_cumulative_preds[selected_coin]})
+    else:
+        st.warning(f"{selected_coin}에 대한 누적 예측 데이터가 없습니다.")
 
 if __name__ == '__main__':
     main()

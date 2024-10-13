@@ -2,7 +2,7 @@ import os
 import schedule
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from data_collector import collect_upbit_data, get_current_price, collect_data
 from technical_analysis import perform_analysis
 from price_predictor import predict_prices
@@ -22,6 +22,10 @@ def save_predictions(predictions):
     previous_predictions = load_previous_predictions()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # predictions 디렉토리 생성 (없는 경우)
+    if not os.path.exists('predictions'):
+        os.makedirs('predictions')
+    
     # 새로운 예측 데이터와 이전 데이터 병합
     for coin, pred in predictions.items():
         if coin not in previous_predictions:
@@ -35,7 +39,8 @@ def save_predictions(predictions):
         # 최근 10개의 예측만 유지
         previous_predictions[coin] = previous_predictions[coin][-9:] + [pred]
     
-    filename = f"predictions_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    # 파일에 저장하는 과정
+    filename = os.path.join('predictions', f"predictions_{datetime.now().strftime('%Y%m%d_%H%M')}.json")
     with open(filename, 'w') as f:
         json.dump(previous_predictions, f, indent=4)
 
@@ -77,9 +82,17 @@ def save_predictions(predictions):
         # 새 예측에 타임스탬프 추가
         pred['timestamp'] = timestamp
         
-        # 최근 10개의 예측만 유지
-        previous_predictions[coin] = previous_predictions[coin][-9:] + [pred]
+        # 예측 데이터 추가
+        previous_predictions[coin].append(pred)
     
+    # 최근 3일간의 데이터만 유지
+    three_days_ago = datetime.now() - timedelta(days=3)
+    for coin, pred_list in previous_predictions.items():
+        previous_predictions[coin] = [
+            pred for pred in pred_list if datetime.strptime(pred['timestamp'], "%Y-%m-%d %H:%M:%S") > three_days_ago
+        ]
+
+    # 파일에 저장
     filename = os.path.join('predictions', f"predictions_{datetime.now().strftime('%Y%m%d_%H%M')}.json")
     with open(filename, 'w') as f:
         json.dump(previous_predictions, f, indent=4)
